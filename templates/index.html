@@ -1,91 +1,139 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Xperimentor App</title>
-  <style>
-    body { font-family: Arial, sans-serif; background-color: #f8f8f8; padding: 20px; margin: 0; }
-    h1, h2 { text-align: center; color: #000; }
-    .section { margin-bottom: 30px; }
-    .form-box { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-    input[type="file"], input[type="text"] { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; }
-    button { background-color: #4CAF50; color: white; padding: 12px; width: 100%; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; }
-    button:hover { background-color: #45a049; }
-    .message { padding: 10px; margin: 10px 0; background: #e0ffe0; border-radius: 5px; text-align: center; }
-    .questions { background: #fff; padding: 20px; margin: 20px 0; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); white-space: pre-wrap; font-size: 16px; line-height: 1.6; }
-  </style>
+    <title>Xperimentor App</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 600px; margin: auto; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; }
+        input[type="file"], input[type="text"], button { width: 100%; padding: 8px; margin-bottom: 10px; }
+        button { background-color: #4CAF50; color: white; border: none; cursor: pointer; }
+        button:hover { background-color: #45a049; }
+        .response { margin-top: 20px; padding: 10px; border: 1px solid #ccc; display: none; }
+        .error { color: red; }
+        .success { color: green; }
+    </style>
 </head>
 <body>
-  <h1>Welcome to the Xperimentor App</h1>
+    <div class="container">
+        <h1>Welcome to the Xperimentor App</h1>
+        <div class="form-group">
+            <h3>Upload a File</h3>
+            <form id="uploadForm" enctype="multipart/form-data" method="post">
+                <label for="file">Select a file (PDF, DOCX, XLSX, CSV, PNG, JPG, JPEG):</label>
+                <input type="file" id="file" name="file" accept=".pdf,.docx,.xlsx,.csv,.png,.jpg,.jpeg" required>
+                <button type="submit">Upload</button>
+            </form>
+            <div id="uploadResponse" class="response"></div>
+        </div>
+        <div class="form-group">
+            <h3>Ask a Question</h3>
+            <form id="askForm" method="post">
+                <label for="query">Enter your question about the uploaded document:</label>
+                <input type="text" id="query" name="query" placeholder="e.g., Generate 5 quiz questions from the document" required>
+                <button type="submit">Ask</button>
+            </form>
+            <div id="askResponse" class="response"></div>
+        </div>
+        <div class="form-group">
+            <h3>Ask About an Image</h3>
+            <form id="askImageForm" enctype="multipart/form-data" method="post">
+                <label for="imageFile">Select an image (PNG, JPG, JPEG):</label>
+                <input type="file" id="imageFile" name="file" accept=".png,.jpg,.jpeg" required>
+                <label for="imageQuery">Question about the image:</label>
+                <input type="text" id="imageQuery" name="question" placeholder="e.g., Describe this image" required>
+                <button type="submit">Ask About Image</button>
+            </form>
+            <div id="askImageResponse" class="response"></div>
+        </div>
+        <script>
+    // Function to get the base URL from the WebView
+    function getBaseUrl() {
+        return window.location.origin; // Dynamically uses the WebView's URL
+    }
 
-  <div class="section">
-    <h2>Upload a File</h2>
-    <div class="form-box">
-      <p>Select a file (PDF, DOCX, XLSX, CSV, PNG, JPG, JPEG):</p>
-      <form id="uploadForm" enctype="multipart/form-data">
-        <input type="file" name="file" accept=".pdf,.docx,.xlsx,.csv,.png,.jpg,.jpeg" required>
-        <button type="submit">Upload</button>
-      </form>
-      <div id="uploadMessage"></div>
-    </div>
-  </div>
-
-  <div class="section">
-    <h2>Ask a Question</h2>
-    <div class="form-box">
-      <p>Enter your question about the uploaded document:</p>
-      <form id="askForm">
-        <input type="text" name="query" placeholder="e.g., Generate 5 quiz questions from chapter 6" required>
-        <button type="submit">Ask</button>
-      </form>
-    </div>
-  </div>
-
-  <div id="questionsOutput" class="questions" style="display: none;"></div>
-
-  <div class="section">
-    <h2>Ask About an Image</h2>
-    <div class="form-box">
-      <p>Select an image (PNG, JPG, JPEG):</p>
-      <form id="imageForm" enctype="multipart/form-data">
-        <input type="file" name="file" accept=".png,.jpg,.jpeg" required>
-        <input type="text" name="question" placeholder="e.g., Describe this image" value="Describe this image">
-        <button type="submit">Ask About Image</button>
-      </form>
-    </div>
-  </div>
-
-  <script>
-    document.getElementById('uploadForm').onsubmit = function(e) {
-      e.preventDefault();
-      const msg = document.getElementById('uploadMessage');
-      msg.innerHTML = 'Uploading...';
-      fetch('/upload', { method: 'POST', body: new FormData(this) })
-        .then(r => r.json())
+    // Upload form submission
+    document.getElementById('uploadForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        console.log('Upload FormData entries:', Array.from(formData.entries()));
+        fetch(getBaseUrl() + '/upload', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => {
+            if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+            return response.json();
+        })
         .then(data => {
-          msg.innerHTML = '<div class="message">' + data.message + '</div>';
+            document.getElementById('uploadResponse').innerText = data.message;
+            document.getElementById('uploadResponse').className = data.message.includes('uploaded') ? 'response success' : 'response error';
+            document.getElementById('uploadResponse').style.display = 'block';
+        })
+        .catch(error => {
+            console.error('Upload error:', error);
+            document.getElementById('uploadResponse').innerText = 'Error: ' + error.message;
+            document.getElementById('uploadResponse').className = 'response error';
+            document.getElementById('uploadResponse').style.display = 'block';
         });
-    };
+    });
 
-    document.getElementById('askForm').onsubmit = function(e) {
-      e.preventDefault();
-      const fd = new FormData(this);
-      fetch('/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: fd.get('query') })
-      })
-      .then(r => r.json())
-      .then(data => {
-        const output = document.getElementById('questionsOutput');
-        output.textContent = data.answer;
-        output.style.display = 'block';
-        // Scroll to questions
-        output.scrollIntoView({ behavior: 'smooth' });
-        this.reset();
-      });
-    };
-  </script>
+    // Ask form submission
+    document.getElementById('askForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const query = document.getElementById('query').value;
+        fetch(getBaseUrl() + '/ask', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({query: query})
+        })
+        .then(response => {
+            if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+            return response.json();
+        })
+        .then(data => {
+            const answer = data.answer || 'No response';
+            document.getElementById('askResponse').innerText = answer;
+            document.getElementById('askResponse').className = 'response';
+            document.getElementById('askResponse').style.display = 'block';
+            // Send the answer to the WebView for PDF download
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'quiz_generated', answer: answer }));
+        })
+        .catch(error => {
+            console.error('Ask error:', error);
+            document.getElementById('askResponse').innerText = 'Error: ' + error.message;
+            document.getElementById('askResponse').className = 'response error';
+            document.getElementById('askResponse').style.display = 'block';
+        });
+    });
+
+    // Ask Image form submission
+    document.getElementById('askImageForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        console.log('Image FormData entries:', Array.from(formData.entries()));
+        fetch(getBaseUrl() + '/ask_image', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => {
+            if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+            return response.json();
+        })
+        .then(data => {
+            document.getElementById('askImageResponse').innerText = data.answer;
+            document.getElementById('askImageResponse').className = 'response';
+            document.getElementById('askImageResponse').style.display = 'block';
+        })
+        .catch(error => {
+            console.error('Ask Image error:', error);
+            document.getElementById('askImageResponse').innerText = 'Error: ' + error.message;
+            document.getElementById('askImageResponse').className = 'response error';
+            document.getElementById('askImageResponse').style.display = 'block';
+        });
+    });
+</script>
+    </div>
 </body>
 </html>
