@@ -30,7 +30,7 @@ if not api_key:
 
 client = OpenAI(api_key=api_key)
 
-# In-memory stores (resets on restart — expected for simple app)
+# In-memory stores
 documents = []
 index = None
 
@@ -54,7 +54,7 @@ def add_to_index(chunks):
         index = faiss.IndexFlatL2(dim)
     index.add(np.array(new_embeddings))
     documents.extend(chunks)
-    app.logger.info(f"Added {len(chunks)} chunks to index. Total documents: {len(documents)}")
+    app.logger.info(f"Added {len(chunks)} chunks to index. Total: {len(documents)}")
 
 # --- Extraction utilities ---
 def extract_text_from_image(file_path):
@@ -68,12 +68,15 @@ def extract_text_from_image(file_path):
 def extract_text(file_path):
     text = ""
     try:
-        if file_path.endswith(".pdf"):
+        if file_path.lower().endswith(".pdf"):
             with pdfplumber.open(file_path) as pdf:
-                for page in pdf.pages:
+                # Faster: limit to first 100 pages for large textbooks
+                for page in pdf.pages[:100]:
                     page_text = page.extract_text()
                     if page_text:
                         text += page_text + "\n"
+                    if len(text) > 50000:  # Stop early if enough text
+                        break
         elif file_path.endswith(".docx"):
             doc = docx.Document(file_path)
             for para in doc.paragraphs:
@@ -125,7 +128,6 @@ def upload_file():
         if file.filename == '':
             return jsonify({"message": "No selected file"}), 400
 
-        # Save temporarily
         os.makedirs('./temp', exist_ok=True)
         with tempfile.NamedTemporaryFile(delete=False, dir='./temp', suffix=os.path.splitext(file.filename)[1]) as tmp:
             file_path = tmp.name
@@ -133,13 +135,19 @@ def upload_file():
 
         text = extract_text(file_path)
         if not text.strip():
-            os.unlink(file_path)  # Clean up
+            os.unlink(file_path)
             return jsonify({"message": "No readable text found in the file"}), 400
 
-        chunks = [text[i:i+500] for i in range(0, len(text), 500)]
+        # Faster chunking with smaller chunks + extra early chunks for TOC
+        chunks = [text[i:i+400] for i in range(0, len(text), 400)]
+        # Add smaller chunks from beginning (where chapter list usually is)
+        early_lines = text.split('\n')[:300]
+        early_text = '\n'.join(early_lines)
+        chunks.extend([early_text[i:i+200] for i in range(0, len(early_text), 200)])
+
         add_to_index(chunks)
 
-        # Clean up file after processing
+        # Clean up
         try:
             os.unlink(file_path)
         except:
@@ -162,23 +170,58 @@ def ask():
         if index is None or len(documents) == 0:
             return jsonify({"answer": "No documents uploaded yet. Please upload a file first."}), 400
 
+        # Retrieve more context for accuracy
         query_vec = embed_texts([query])[0].reshape(1, -1)
-        D, I = index.search(query_vec, 3)
+        D, I = index.search(query_vec, 6)  # More chunks = better for chapter titles
         retrieved = [documents[i] for i in I[0] if i != -1]
+        context = "\n\n".join(retrieved)
 
-        context = "\n".join(retrieved)
-        prompt = f"""Based on the following context:\n{context}\n\nUser query: {query}\n\nGenerate only the requested questions with options (for MCQs, True/False, etc.). Do not include answers, explanations, or extra text. Format clearly with one question per section and options below if needed."""
+        query_lower = query.lower()
+
+        # Detect if user wants quiz/questions
+        if any(word in query_lower for word in ["generate", "create", "make", "mcq", "quiz", "questions", "question"]):
+            prompt = f"""Based on the following context from the uploaded document:
+
+{context}
+
+User request: {query}
+
+Generate only the requested questions (MCQs, True/False, Fill in the blanks, Short answer, etc.) with options where applicable.
+Do NOT include answers, explanations, or any extra text.
+Format clearly:
+1. Question text
+   a) option1
+   b) option2
+   ...
+"""
+        else:
+            # Factual query (e.g., chapter titles, definitions)
+            prompt = f"""You are an expert assistant answering based ONLY on the uploaded document.
+
+Relevant context:
+{context}
+
+Question: {query}
+
+Answer directly and accurately using only the information above.
+- If asking for a chapter title (e.g., "What is chapter 1 called?"), extract the exact title from the context.
+- If the information is not present, say "I couldn't find that information in the document."
+
+Answer:"""
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,  # Low for accuracy
+            max_tokens=600
         )
         answer = response.choices[0].message.content.strip()
+
         return jsonify({"answer": answer})
 
     except Exception as e:
         app.logger.error(f"Ask error: {str(e)}")
-        return jsonify({"answer": f"Error generating questions: {str(e)}"}), 500
+        return jsonify({"answer": f"Error generating response: {str(e)}"}), 500
 
 @app.route("/ask_image", methods=["POST"])
 def ask_image():
@@ -195,7 +238,6 @@ def ask_image():
 
         answer = ask_about_image(file_path, question)
 
-        # Clean up
         try:
             os.unlink(file_path)
         except:
