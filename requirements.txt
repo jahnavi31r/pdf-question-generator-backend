@@ -4,8 +4,10 @@ openai
 pdfplumber
 python-docx
 pandas
+openpyxl
 pytesseract
 pillow
 faiss-cpu
+numpy
 python-dotenv
-gunicorn
+gunicorn  # Recommended for Render
