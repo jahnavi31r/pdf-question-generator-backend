@@ -70,11 +70,12 @@ def extract_text(file_path):
     try:
         if file_path.lower().endswith(".pdf"):
             with pdfplumber.open(file_path) as pdf:
-                for page in pdf.pages[:100]:  # Limit for speed
+                # Faster: limit to first 100 pages for large textbooks
+                for page in pdf.pages[:100]:
                     page_text = page.extract_text()
                     if page_text:
                         text += page_text + "\n"
-                    if len(text) > 60000:
+                    if len(text) > 50000:  # Stop early if enough text
                         break
         elif file_path.endswith(".docx"):
             doc = docx.Document(file_path)
@@ -137,15 +138,16 @@ def upload_file():
             os.unlink(file_path)
             return jsonify({"message": "No readable text found in the file"}), 400
 
-        # Improved chunking for better coverage
+        # Faster chunking with smaller chunks + extra early chunks for TOC
         chunks = [text[i:i+400] for i in range(0, len(text), 400)]
-        # Extra small chunks from start (for TOC/chapter titles)
+        # Add smaller chunks from beginning (where chapter list usually is)
         early_lines = text.split('\n')[:300]
         early_text = '\n'.join(early_lines)
         chunks.extend([early_text[i:i+200] for i in range(0, len(early_text), 200)])
 
         add_to_index(chunks)
 
+        # Clean up
         try:
             os.unlink(file_path)
         except:
@@ -166,78 +168,60 @@ def ask():
         if not query:
             return jsonify({"answer": "Please provide a query."}), 400
         if index is None or len(documents) == 0:
-            return jsonify({"answer": "No document uploaded yet. Please upload a file first."}), 400
+            return jsonify({"answer": "No documents uploaded yet. Please upload a file first."}), 400
 
-        # Retrieve maximum relevant context
+        # Retrieve more context for accuracy
         query_vec = embed_texts([query])[0].reshape(1, -1)
-        D, I = index.search(query_vec, 12)  # Max chunks for best coverage
+        D, I = index.search(query_vec, 6)  # More chunks = better for chapter titles
         retrieved = [documents[i] for i in I[0] if i != -1]
         context = "\n\n".join(retrieved)
 
         query_lower = query.lower()
 
-        # Question generation mode
+        # Detect if user wants quiz/questions
         if any(word in query_lower for word in ["generate", "create", "make", "mcq", "quiz", "questions", "question"]):
-            prompt = f"""YOU ARE A QUESTION GENERATOR FOR THE UPLOADED DOCUMENT.
+            prompt = f"""Based on the following context from the uploaded document:
 
-YOU MUST GENERATE QUESTIONS **EXCLUSIVELY** FROM THE CONTENT BELOW.
-DO NOT USE ANY EXTERNAL KNOWLEDGE OR MAKE UP CONTENT.
-DO NOT GENERATE QUESTIONS ABOUT EXAM PATTERN, WEIGHTAGE, BLUEPRINT, OR MARKS DISTRIBUTION.
-
-UPLOADED DOCUMENT CONTENT:
 {context}
 
-USER REQUEST: {query}
+User request: {query}
 
-INSTRUCTIONS:
-- Generate the requested number of questions from the document content.
-- If no number is specified, generate 6–8 questions.
-- If no chapter/topic is specified, use important concepts from the document.
-- Include MCQs with 4 options, True/False, Fill in the blanks, Short answer.
-- DO NOT include answers or explanations.
-
-FORMAT:
-1. Question text?
+Generate only the requested questions (MCQs, True/False, Fill in the blanks, Short answer, etc.) with options where applicable.
+Do NOT include answers, explanations, or any extra text.
+Format clearly:
+1. Question text
    a) option1
    b) option2
-   c) option3
-   d) option4
-
-2. Next question...
+   ...
 """
-
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.4,
-                max_tokens=1200
-            )
-
-        # Factual mode
         else:
-            prompt = f"""Answer using ONLY the uploaded document content below.
+            # Factual query (e.g., chapter titles, definitions)
+            prompt = f"""You are an expert assistant answering based ONLY on the uploaded document.
 
-DOCUMENT CONTENT:
+Relevant context:
 {context}
 
-QUESTION: {query}
+Question: {query}
 
-Answer directly. If not found, say "Not found in the document."
-"""
+Answer directly and accurately using only the information above.
+- If asking for a chapter title (e.g., "What is chapter 1 called?"), extract the exact title from the context.
+- If the information is not present, say "I couldn't find that information in the document."
 
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=400
-            )
+Answer:"""
 
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,  # Low for accuracy
+            max_tokens=600
+        )
         answer = response.choices[0].message.content.strip()
+
         return jsonify({"answer": answer})
 
     except Exception as e:
         app.logger.error(f"Ask error: {str(e)}")
-        return jsonify({"answer": "Sorry, an error occurred. Please try again."}), 500
+        return jsonify({"answer": f"Error generating response: {str(e)}"}), 500
 
 @app.route("/ask_image", methods=["POST"])
 def ask_image():
